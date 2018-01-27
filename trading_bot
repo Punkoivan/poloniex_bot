@@ -1,0 +1,135 @@
+#!/usr/bin/python2.7
+from poloniex import poloniex
+import sys
+import requests
+
+CUR = sys.argv[2]
+CUR2 = sys.argv[1]
+def user():
+    secret = 'Secret_here'
+    api = poloniex("api_key_here", secret)
+    return api
+
+'''
+Add telegram bot first!
+@vaniks_bot
+'''
+def post_telegram(string):
+    payload = {'chat_id': "chat_id",
+               'text': string}
+    req = requests.post("https://api.telegram.org/bot496763173:AAGBFlmSI9-wsUvJuN9D0KKaj76njJbrduY/sendMessage", data = payload)
+
+
+def get_new_rate(btc, usdt, order_type, current_rate, fee):
+    if order_type == 'buy':
+        print("%s FOR NEW RATE  " % CUR + str(btc))
+        print("USDT FOR NEW RATE  " + str(usdt))
+        #print("BTC FOR NEW RATE  " + str(btc))
+        new_rate = float(usdt) / ((1 - fee) * float(btc))
+        if current_rate > new_rate:
+            print('Current rate(%s) is higher than new(%s), using current' % (current_rate, new_rate))
+            new_rate = current_rate
+        else:
+            new_rate = new_rate * 1.0002
+            print('Current rate(%s) is lower than new(%s), using new' % (current_rate, new_rate))
+            #new_rate = new_rate * 1.01
+#If previous selling, that now buying at lower price
+    else:
+        new_rate = (float(usdt) * (1-fee)) / float(btc)
+        if current_rate < new_rate:
+            print('Current rate(%s) is lower than new(%s), using current' % (current_rate, new_rate))
+            new_rate = current_rate
+        else:
+            new_rate = new_rate * 0.9999
+            print('Current rate(%s) is higher than new(%s), using new' % (current_rate, new_rate))
+            #new_rate = new_rate * 0.99
+    return round(new_rate, 8)
+
+trade = user()
+current_rate = float(trade.returnTicker('%s_%s' % (CUR2, CUR)))
+
+
+def place_order(currency):
+    btc, usdt, order_type, fee = get_previous_trade()
+    print(get_previous_trade())
+    rate = get_new_rate(btc, usdt, order_type, current_rate, fee)
+    if order_type == 'buy':
+        new_curr = btc * rate
+        trade.sell(rate, btc, currency)
+        output = 'order for sale ' + str(new_curr) + '  ' + str(currency) + '  at ' + str(rate) + ' has been placed'
+        print(output)
+        post_telegram(output)
+    if order_type == 'sell':
+        new_curr =  usdt / rate
+        trade.buy(rate, new_curr, currency)
+        output = ('order for buy ' + str(new_curr) + ' ' + str(currency) + ' at ' + str(rate) + ' has been placed')  
+        print(output)
+        post_telegram(output)
+
+def is_current_trade(currency):
+    cur = trade.returnOpenOrders(currency)
+    res = len(cur)
+    if res == 0:
+        return False
+    else:
+        print('current_rate is ' + str(current_rate) + "  waiting for " + cur[0]['rate'])
+        return True
+
+def get_previous_trade():
+    i = 0
+    res_currency = 0
+    res_usdt = 0
+    equal = True
+    while equal == True:
+        last = trade.returnTradeHistory("%s_%s" % (CUR2, CUR))[i]
+        currency, usdt, order_type, rate, fee = parse_last_trade(last)
+        try:
+            last = trade.returnTradeHistory("%s_%s" % (CUR2,CUR))[i+1]
+        except:
+            print('only 1 trade, go ahead')
+            equal = False
+            continue
+        if order_type == last['type']:
+            print('One more loop')
+            pre_currency, pre_usdt, preorder_type, rate, fee = parse_last_trade(last)
+            if i != 0:
+                currency = 0
+                usdt = 0
+            res_currency = res_currency + pre_currency + currency
+            res_usdt = res_usdt + pre_usdt + usdt
+            i += 1
+         #   print('\nprevious bit' + str(currency))
+         #   print('prepre bit' + str(pre_currency))
+         #   print('result bit' + str(res_currency))
+         #   print('\nprevious usd' + str(usdt))
+         #   print('prepre usd' + str(pre_usdt))
+         #   print('result usd' + str(res_usdt))
+        else:
+            if res_usdt != 0 or res_currency != 0:
+                res_usdt = res_usdt
+                res_currency = res_currency
+            else:    
+                res_usdt = usdt
+                res_currency = currency
+            equal = False
+    #print(str(res_currency))
+    return res_currency, res_usdt, order_type, fee
+    #return currency, usdt, order_type, fee
+
+def parse_last_trade(last):
+    order_type = last['type']
+    currency = float(last['amount'])
+    usdt = float(last['total'])
+    rate = float(last['rate'])
+    fee = float(last['fee'])
+    if order_type == "buy":
+        currency = currency - currency * fee
+    else:
+        usdt = usdt - usdt * fee
+    return currency, usdt, order_type, rate, fee
+
+if is_current_trade('%s_%s' % (CUR2, CUR)):
+    print("Existing order found for %s! Waiting...." % CUR)
+else:
+    print("No existing order")
+    place_order("%s_%s" % (CUR2, CUR))
